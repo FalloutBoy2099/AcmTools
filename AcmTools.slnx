@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="AcmTools.Cli/AcmTools.Cli.csproj" />
+  <Project Path="AcmTools/AcmTools.csproj" />
+</Solution>
