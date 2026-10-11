@@ -21,7 +21,7 @@ namespace AcmTools.Cli
 
 		public static void WriteResult(ConversionResult result)
 		{
-			AnsiConsole.MarkupLine($"[green]OK[/] {Markup.Escape(result.OutputPath)}");
+			AnsiConsole.MarkupLine($"[green]{Markup.Escape(AppText.Get("Done"))}[/] {Markup.Escape(result.OutputPath)}");
 			foreach (String step in result.Steps)
 			{
 				AnsiConsole.MarkupLine($"  - {Markup.Escape(AppText.LocalizeStep(step))}");

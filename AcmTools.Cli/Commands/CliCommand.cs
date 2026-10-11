@@ -3,8 +3,8 @@ namespace AcmTools.Cli.Commands
 	using System;
 	using System.Collections.Generic;
 	using AcmTools.Acm;
-	using AcmTools.Cli.Localization;
 	using AcmTools.Conversion;
+	using Localization;
 
 	internal abstract class CliCommand(String name, String arguments, Int32 positionalCount, IReadOnlyCollection<String> flags, IReadOnlyCollection<String> valueOptions)
 	{

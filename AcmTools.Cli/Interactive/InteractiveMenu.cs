@@ -2,10 +2,10 @@ namespace AcmTools.Cli.Interactive
 {
 	using System;
 	using System.IO;
-	using AcmTools.Acm;
-	using AcmTools.Cli.Localization;
-	using AcmTools.Conversion;
 	using Spectre.Console;
+	using AcmTools.Acm;
+	using AcmTools.Conversion;
+	using Localization;
 
 	internal sealed class InteractiveMenu(AcmConverter converter)
 	{

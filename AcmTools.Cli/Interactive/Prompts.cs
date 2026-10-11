@@ -3,8 +3,8 @@ namespace AcmTools.Cli.Interactive
 	using System;
 	using System.Globalization;
 	using System.IO;
-	using AcmTools.Cli.Localization;
 	using Spectre.Console;
+	using Localization;
 
 	internal static class Prompts
 	{

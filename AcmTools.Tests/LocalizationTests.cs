@@ -12,6 +12,13 @@ namespace AcmTools.Tests
 
 	public sealed class LocalizationTests
 	{
+		private static readonly String[] MenuKeys =
+		[
+			"MainMenuTitle", "InspectAction", "ToAudioAction", "ToAcmAction", "LanguageAction", "QuitAction", "LanguageTitle",
+			"SourceAcm", "TargetAudio", "SourceAudio", "TargetAcm", "FormatTitle", "AutoFormat", "FileNotFound", "RequiredPath",
+			"Yes", "No"
+		];
+
 		public static IEnumerable<Object[]> Languages()
 		{
 			return Enum.GetNames<CliLanguage>().Select(name => new Object[] { name });
@@ -54,13 +61,13 @@ namespace AcmTools.Tests
 
 		[Theory]
 		[MemberData(nameof(Languages))]
-		public void CompactLanguagePacksTranslateTheBasicKeys(String languageName)
+		public void EveryLanguageTranslatesTheMenuKeys(String languageName)
 		{
 			CliLanguage language = Enum.Parse<CliLanguage>(languageName);
 			IReadOnlyDictionary<String, String> english = AppText.GetTexts(CliLanguage.English);
 			IReadOnlyDictionary<String, String> texts = AppText.GetTexts(language);
 
-			foreach (String key in AppText.BasicKeys)
+			foreach (String key in MenuKeys)
 			{
 				Assert.True(texts.ContainsKey(key), $"{language} is missing '{key}'.");
 				if (language != CliLanguage.English && key != "No")
@@ -95,10 +102,13 @@ namespace AcmTools.Tests
 					Assert.NotEqual(step, AppText.LocalizeStep(step));
 				}
 
-				AppText.SetLanguage(CliLanguage.English);
-				foreach (String step in steps)
+				foreach (CliLanguage untranslated in new[] { CliLanguage.English, CliLanguage.Spanish })
 				{
-					Assert.Equal(step, AppText.LocalizeStep(step));
+					AppText.SetLanguage(untranslated);
+					foreach (String step in steps)
+					{
+						Assert.Equal(step, AppText.LocalizeStep(step));
+					}
 				}
 			}
 			finally
