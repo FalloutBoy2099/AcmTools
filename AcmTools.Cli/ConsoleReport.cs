@@ -3,6 +3,7 @@ namespace AcmTools.Cli
 	using System;
 	using System.Globalization;
 	using AcmTools.Acm;
+	using AcmTools.Cli.Localization;
 	using AcmTools.Conversion;
 	using Spectre.Console;
 
@@ -23,21 +24,21 @@ namespace AcmTools.Cli
 			AnsiConsole.MarkupLine($"[green]OK[/] {Markup.Escape(result.OutputPath)}");
 			foreach (String step in result.Steps)
 			{
-				AnsiConsole.MarkupLine($"  - {Markup.Escape(step)}");
+				AnsiConsole.MarkupLine($"  - {Markup.Escape(AppText.LocalizeStep(step))}");
 			}
 		}
 
 		public static void WriteInspection(AcmInfo info)
 		{
 			Table table = new();
-			table.AddColumn("Field");
-			table.AddColumn("Value");
-			AddRow(table, "Samples", info.SampleCount);
-			AddRow(table, "Header channels", info.HeaderChannels);
-			AddRow(table, "Effective channels", info.Channels);
-			AddRow(table, "Sample rate", info.SampleRate);
-			AddRow(table, "ACM level", info.Level);
-			AddRow(table, "Rows", info.Rows);
+			table.AddColumn(AppText.Get("FieldColumn"));
+			table.AddColumn(AppText.Get("ValueColumn"));
+			AddRow(table, AppText.Get("Samples"), info.SampleCount);
+			AddRow(table, AppText.Get("HeaderChannels"), info.HeaderChannels);
+			AddRow(table, AppText.Get("EffectiveChannels"), info.Channels);
+			AddRow(table, AppText.Get("SampleRate"), info.SampleRate);
+			AddRow(table, AppText.Get("AcmLevel"), info.Level);
+			AddRow(table, AppText.Get("Rows"), info.Rows);
 			AnsiConsole.Write(table);
 		}
 

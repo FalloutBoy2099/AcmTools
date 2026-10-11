@@ -3,6 +3,7 @@ namespace AcmTools.Cli.Commands
 	using System;
 	using System.Collections.Generic;
 	using AcmTools.Acm;
+	using AcmTools.Cli.Localization;
 	using AcmTools.Conversion;
 
 	internal abstract class CliCommand(String name, String arguments, Int32 positionalCount, IReadOnlyCollection<String> flags, IReadOnlyCollection<String> valueOptions)
@@ -26,7 +27,7 @@ namespace AcmTools.Cli.Commands
 
 				if (commandLine.Positionals.Count != positionalCount)
 				{
-					throw new CliUsageException($"Expected {positionalCount} argument(s), got {commandLine.Positionals.Count}.");
+					throw new CliUsageException(AppText.Format("ExpectedArguments", positionalCount, commandLine.Positionals.Count));
 				}
 
 				return await ExecuteAsync(commandLine).ConfigureAwait(false);

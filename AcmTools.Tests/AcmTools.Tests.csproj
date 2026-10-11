@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\AcmTools\AcmTools.csproj" />
+    <ProjectReference Include="..\AcmTools.Cli\AcmTools.Cli.csproj" />
   </ItemGroup>
 
 </Project>

@@ -3,31 +3,31 @@ namespace AcmTools.Cli.Interactive
 	using System;
 	using System.IO;
 	using AcmTools.Acm;
+	using AcmTools.Cli.Localization;
 	using AcmTools.Conversion;
 	using Spectre.Console;
 
 	internal sealed class InteractiveMenu(AcmConverter converter)
 	{
-		private const String FalloutMonoPrompt = "Mode Fallout mono (recommande pour les ACM Fallout) ?";
-
 		private enum MenuAction
 		{
 			Inspect,
 			ToAudio,
 			ToAcm,
+			Language,
 			Quit
 		}
 
 		public async Task<Int32> RunAsync()
 		{
-			AnsiConsole.MarkupLine("[grey]Fallout/Interplay ACM audio converter[/]");
+			AnsiConsole.MarkupLine($"[grey]{Markup.Escape(AppText.Get("ToolkitTagline"))}[/]");
 			AnsiConsole.WriteLine();
 
 			while (true)
 			{
 				MenuAction action = AnsiConsole.Prompt(
 					new SelectionPrompt<MenuAction>()
-						.Title("Que veux-tu faire ?")
+						.Title(AppText.Get("MainMenuTitle"))
 						.PageSize(8)
 						.UseConverter(Describe)
 						.AddChoices(Enum.GetValues<MenuAction>()));
@@ -49,6 +49,9 @@ namespace AcmTools.Cli.Interactive
 					case MenuAction.ToAcm:
 						await ToAcmAsync().ConfigureAwait(false);
 						break;
+					case MenuAction.Language:
+						ChangeLanguage();
+						break;
 				}
 
 				AnsiConsole.WriteLine();
@@ -57,26 +60,26 @@ namespace AcmTools.Cli.Interactive
 
 		private void Inspect()
 		{
-			String inputPath = Prompts.ExistingPath("Fichier ACM source");
+			String inputPath = Prompts.ExistingPath(AppText.Get("SourceAcm"));
 			AcmDecodeOptions options = new()
 			{
-				ForceFalloutMono = Prompts.YesNo(FalloutMonoPrompt, true)
+				ForceFalloutMono = Prompts.YesNo(AppText.Get("FalloutMonoConfirm"), true)
 			};
 			ConsoleReport.WriteInspection(converter.Inspect(inputPath, options));
 		}
 
 		private async Task ToAudioAsync()
 		{
-			String inputPath = Prompts.ExistingPath("Fichier ACM source");
-			String outputPath = Prompts.OutputPath("Fichier audio cible", Path.ChangeExtension(inputPath, ".wav"));
+			String inputPath = Prompts.ExistingPath(AppText.Get("SourceAcm"));
+			String outputPath = Prompts.OutputPath(AppText.Get("TargetAudio"), Path.ChangeExtension(inputPath, ".wav"));
 			AudioFormat format = PromptOutputFormat(outputPath);
 			AcmDecodeOptions options = new()
 			{
-				ForceFalloutMono = Prompts.YesNo(FalloutMonoPrompt, true)
+				ForceFalloutMono = Prompts.YesNo(AppText.Get("FalloutMonoConfirm"), true)
 			};
 
 			ConversionResult result = await RunWithStatusAsync(
-				"Conversion ACM vers audio...",
+				AppText.Get("ToAudioStatus"),
 				() => converter.ConvertAcmToAudioAsync(inputPath, outputPath, format, options)).ConfigureAwait(false);
 			ConsoleReport.WriteResult(result);
 		}
@@ -84,23 +87,35 @@ namespace AcmTools.Cli.Interactive
 		private async Task ToAcmAsync()
 		{
 			AnsiConsole.Write(new Panel(new Markup(
-				"[cyan]Les ACM Fallout sont generes en mono par defaut pour eviter une lecture acceleree en jeu.[/]"))
-				.Header("Audio vers ACM")
+				$"[cyan]{Markup.Escape(AppText.Get("ToAcmIntro"))}[/]"))
+				.Header(AppText.Get("ToAcmHeader"))
 				.BorderColor(Color.Cyan1));
 
-			String inputPath = Prompts.ExistingPath("Fichier audio source");
-			String outputPath = Prompts.OutputPath("Fichier ACM cible", Path.ChangeExtension(inputPath, ".acm"));
+			String inputPath = Prompts.ExistingPath(AppText.Get("SourceAudio"));
+			String outputPath = Prompts.OutputPath(AppText.Get("TargetAcm"), Path.ChangeExtension(inputPath, ".acm"));
 			AcmEncodeOptions options = new()
 			{
-				SampleRate = Prompts.Integer("Frequence cible", AcmEncodeOptions.DefaultSampleRate, AcmEncodeOptions.MinSampleRate, AcmEncodeOptions.MaxSampleRate),
+				SampleRate = Prompts.Integer(AppText.Get("SampleRatePrompt"), AcmEncodeOptions.DefaultSampleRate, AcmEncodeOptions.MinSampleRate, AcmEncodeOptions.MaxSampleRate),
 				ForceMono = true,
-				Overwrite = Prompts.YesNo("Ecraser le fichier cible si besoin ?", true)
+				Overwrite = Prompts.YesNo(AppText.Get("OverwriteConfirm"), true)
 			};
 
 			ConversionResult result = await RunWithStatusAsync(
-				"Conversion audio vers ACM...",
+				AppText.Get("ToAcmStatus"),
 				() => converter.ConvertAudioToAcmAsync(inputPath, outputPath, options)).ConfigureAwait(false);
 			ConsoleReport.WriteResult(result);
+		}
+
+		private static void ChangeLanguage()
+		{
+			LanguageOption language = AnsiConsole.Prompt(
+				new SelectionPrompt<LanguageOption>()
+					.Title(AppText.Get("LanguageTitle"))
+					.PageSize(12)
+					.UseConverter(option => option.DisplayName)
+					.AddChoices(AppText.Languages));
+			AppText.SetLanguage(language.Language);
+			AnsiConsole.MarkupLine($"[green]{Markup.Escape(AppText.Format("LanguageChanged", language.DisplayName))}[/]");
 		}
 
 		private static AudioFormat PromptOutputFormat(String outputPath)
@@ -111,8 +126,8 @@ namespace AcmTools.Cli.Interactive
 
 			AudioFormat choice = AnsiConsole.Prompt(
 				new SelectionPrompt<AudioFormat>()
-					.Title("Format de sortie")
-					.UseConverter(format => format == AudioFormat.Auto ? $"Automatique ({automatic})" : format.ToString())
+					.Title(AppText.Get("FormatTitle"))
+					.UseConverter(format => format == AudioFormat.Auto ? AppText.Format("AutoFormat", automatic) : format.ToString())
 					.AddChoices([AudioFormat.Auto, .. AudioFormats.Exportable]));
 
 			return choice == AudioFormat.Auto ? automatic : choice;
@@ -130,10 +145,11 @@ namespace AcmTools.Cli.Interactive
 		{
 			return action switch
 			{
-				MenuAction.Inspect => "Inspecter un ACM",
-				MenuAction.ToAudio => "Convertir ACM vers audio",
-				MenuAction.ToAcm => "Convertir audio vers ACM",
-				MenuAction.Quit => "Quitter",
+				MenuAction.Inspect => AppText.Get("InspectAction"),
+				MenuAction.ToAudio => AppText.Get("ToAudioAction"),
+				MenuAction.ToAcm => AppText.Get("ToAcmAction"),
+				MenuAction.Language => AppText.Get("LanguageAction"),
+				MenuAction.Quit => AppText.Get("QuitAction"),
 				_ => action.ToString()
 			};
 		}

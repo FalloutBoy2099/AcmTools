@@ -3,6 +3,7 @@ namespace AcmTools.Cli
 	using System;
 	using System.Collections.Generic;
 	using System.Globalization;
+	using AcmTools.Cli.Localization;
 
 	/// <summary>Arguments of a single command, split into positional arguments, flags and valued options.</summary>
 	internal sealed class CommandLine
@@ -49,11 +50,11 @@ namespace AcmTools.Cli
 					i++;
 					commandLine.values[arg] = i < args.Count
 						? args[i]
-						: throw new CliUsageException($"Missing value for option {arg}.");
+						: throw new CliUsageException(AppText.Format("MissingOptionValue", arg));
 				}
 				else
 				{
-					throw new CliUsageException($"Unknown option: {arg}");
+					throw new CliUsageException(AppText.Format("UnknownOption", arg));
 				}
 			}
 
@@ -75,7 +76,7 @@ namespace AcmTools.Cli
 			if (!Int32.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out Int32 value) || value < min || value > max)
 			{
 				throw new CliUsageException(
-					$"Option {name} expects an integer between {min.ToString(CultureInfo.InvariantCulture)} and {max.ToString(CultureInfo.InvariantCulture)}, got '{text}'.");
+					AppText.Format("InvalidIntegerOption", name, min.ToString(CultureInfo.InvariantCulture), max.ToString(CultureInfo.InvariantCulture), text));
 			}
 
 			return value;

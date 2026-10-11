@@ -4,6 +4,7 @@ namespace AcmTools.Cli
 	using System.Collections.Generic;
 	using AcmTools.Cli.Commands;
 	using AcmTools.Cli.Interactive;
+	using AcmTools.Cli.Localization;
 	using AcmTools.Conversion;
 	using Spectre.Console;
 
@@ -41,7 +42,7 @@ namespace AcmTools.Cli
 				CliCommand? command = commands.FirstOrDefault(candidate => String.Equals(candidate.Name, args[0], StringComparison.OrdinalIgnoreCase));
 				if (command is null)
 				{
-					ConsoleReport.WriteError($"Unknown command: {args[0]}");
+					ConsoleReport.WriteError(AppText.Format("UnknownCommand", args[0]));
 					return 1;
 				}
 
@@ -61,14 +62,14 @@ namespace AcmTools.Cli
 
 		private void PrintHelp()
 		{
-			AnsiConsole.MarkupLine("[bold]AcmTools[/] - Fallout/Interplay ACM audio converter");
+			AnsiConsole.MarkupLine($"[bold]AcmTools[/] - {Markup.Escape(AppText.Get("ToolkitTagline"))}");
 			foreach (CliCommand command in commands)
 			{
 				ConsoleReport.WriteUsage(command.Usage);
 			}
 
 			AnsiConsole.WriteLine();
-			AnsiConsole.WriteLine("Fallout mode is mono by default. Use --trust-header-channels only for non-Fallout ACM files.");
+			AnsiConsole.WriteLine(AppText.Get("HelpFalloutNote"));
 		}
 	}
 }
