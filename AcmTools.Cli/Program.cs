@@ -1,7 +1,7 @@
 namespace AcmTools.Cli
 {
 	using System;
-	using AcmTools.Cli.Localization;
+	using Localization;
 
 	internal static class Program
 	{

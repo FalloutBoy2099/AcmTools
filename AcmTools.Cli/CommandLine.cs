@@ -3,7 +3,7 @@ namespace AcmTools.Cli
 	using System;
 	using System.Collections.Generic;
 	using System.Globalization;
-	using AcmTools.Cli.Localization;
+	using Localization;
 
 	/// <summary>Arguments of a single command, split into positional arguments, flags and valued options.</summary>
 	internal sealed class CommandLine

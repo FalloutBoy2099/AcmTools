@@ -2,10 +2,10 @@ namespace AcmTools.Cli
 {
 	using System;
 	using System.Globalization;
-	using AcmTools.Acm;
-	using AcmTools.Cli.Localization;
-	using AcmTools.Conversion;
 	using Spectre.Console;
+	using AcmTools.Acm;
+	using AcmTools.Conversion;
+	using Localization;
 
 	internal static class ConsoleReport
 	{

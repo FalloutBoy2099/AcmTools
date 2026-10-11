@@ -2,11 +2,11 @@ namespace AcmTools.Cli
 {
 	using System;
 	using System.Collections.Generic;
-	using AcmTools.Cli.Commands;
-	using AcmTools.Cli.Interactive;
-	using AcmTools.Cli.Localization;
-	using AcmTools.Conversion;
 	using Spectre.Console;
+	using AcmTools.Conversion;
+	using Commands;
+	using Interactive;
+	using Localization;
 
 	internal sealed class CliApplication
 	{
