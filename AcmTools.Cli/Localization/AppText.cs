@@ -46,9 +46,16 @@ namespace AcmTools.Cli.Localization
 		public static void SetLanguage(CliLanguage language)
 		{
 			Current = language;
-			CultureInfo culture = CultureInfo.GetCultureInfo(Languages.First(option => option.Language == language).CultureName);
-			CultureInfo.CurrentCulture = culture;
-			CultureInfo.CurrentUICulture = culture;
+			try
+			{
+				CultureInfo culture = CultureInfo.GetCultureInfo(Languages.First(option => option.Language == language).CultureName);
+				CultureInfo.CurrentCulture = culture;
+				CultureInfo.CurrentUICulture = culture;
+			}
+			catch (CultureNotFoundException)
+			{
+				// Minimal environments (invariant globalization, no ICU) only know the invariant culture: the texts stay translated.
+			}
 		}
 
 		/// <summary>Finds a language from its code ("fr"), culture ("fr-FR", "fr_CA"), enum name ("French") or display name ("Français").</summary>

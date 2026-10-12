@@ -2,6 +2,10 @@
 
 .NET 10 library and CLI for Fallout/Interplay ACM audio conversion.
 
+[![CI](https://github.com/FalloutBoy2099/AcmTools/actions/workflows/ci.yml/badge.svg)](https://github.com/FalloutBoy2099/AcmTools/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/FalloutBoy2099/AcmTools/actions/workflows/codeql.yml/badge.svg)](https://github.com/FalloutBoy2099/AcmTools/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/FalloutBoy2099/AcmTools)](https://github.com/FalloutBoy2099/AcmTools/releases/latest)
+
 ## Features
 
 - `ACM -> audio`: native ACM decoder, WAV writer, and FFmpeg export for MP3, AAC, FLAC, OGG/Vorbis, Opus, and WMA. APE/MPC export is attempted through FFmpeg when the local build provides an encoder.
@@ -14,6 +18,26 @@
 Most speech and sound effects of the game are tagged stereo in their header although they are mono, so trusting the header makes them play twice as long. Only the music tracks are really stereo. By default (`--channels auto`) audio longer than 60 seconds is therefore treated as music and keeps its two channels, and everything shorter is mono. On the 2,501 ACM files of the game this rule classifies exactly the 19 music tracks as stereo (the longest speech file lasts 45 s); the short ambient loops `wind1.acm` and `wind2.acm` are the only exceptions and need `--channels stereo`.
 
 `--channels mono` and `--channels stereo` force the choice, both when reading an ACM (`inspect`, `to-audio`) and when writing one (`to-acm`: a stereo source is mixed down to mono unless it lasts more than 60 s or `--channels stereo` is given). `--trust-header-channels` is kept as an alias of `--channels stereo`.
+
+## Installing
+
+Every [release](https://github.com/FalloutBoy2099/AcmTools/releases/latest) provides, for Windows, Linux and macOS on x64 and arm64 (`win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64`, `osx-arm64`):
+
+| Download | What it is |
+|---|---|
+| `acmconverter-<version>-<system>-native.zip` | NativeAOT executable: starts in a few milliseconds, nothing to install |
+| `acmconverter-<version>-<system>-standalone.zip` | Self-contained executable with the .NET runtime inside (about 30 MB) |
+| `acmconverter-<version>-<system>-dotnet.zip` | Small executable (about 1 MB) that needs the .NET 10 runtime |
+
+Other ways to get it:
+
+```bash
+dotnet tool install -g AcmTools.Cli                                  # the command is then: acmconverter
+dotnet add package AcmTools                                          # the library
+docker run --rm -v "$PWD:/data" ghcr.io/falloutboy2099/acmtools --help   # image with FFmpeg included, amd64 and arm64
+```
+
+Downloads are listed in `SHA256SUMS.txt` and carry a build provenance attestation (`gh attestation verify <file> --repo FalloutBoy2099/AcmTools`). The macOS executables are not notarized: if Gatekeeper blocks one, run `xattr -d com.apple.quarantine <file>`. FFmpeg is only needed to read or write formats other than WAV and ACM.
 
 ## CLI
 
@@ -53,6 +77,22 @@ await converter.ConvertAudioToAcmAsync("voice.mp3", "voice.acm");
 `AcmDecodeOptions.Channels` and `AcmEncodeOptions.Channels` (`AcmChannelMode.Auto`, `Mono`, `Stereo`) choose the channels, with `StereoThresholdSeconds` (60 by default) as the music threshold.
 
 Both methods accept a `CancellationToken`, run FFmpeg asynchronously (the process is killed on cancellation), and return the conversion steps as `ConversionStep` values (a `Kind` and its `Arguments`, with an English `Message`) so that front ends can translate them.
+
+## Development and releases
+
+GitHub Actions runs on every push and pull request (`.github/workflows`):
+
+- `ci.yml` builds with warnings as errors on Linux, Windows and macOS, runs the unit tests when a `*.Tests.csproj` is present, publishes the CLI and runs `.github/scripts/smoke_test.py` on it (round trips mono and stereo, `--level 0` lossless, batch with a failing file, translations, and the FFmpeg formats on Linux). It also checks that the NativeAOT build works.
+- `codeql.yml` runs the CodeQL security analysis; `dependabot.yml` keeps the NuGet packages, the actions and the Docker image up to date.
+- `release.yml` publishes a release. Push a tag, or start the workflow by hand with a version number:
+
+```bash
+git tag v1.4.0 && git push origin v1.4.0       # v1.4.0-rc.1 gives a pre-release
+```
+
+It runs the CI first, then builds the 18 executables (6 systems x native, standalone and dotnet; the NativeAOT ones are compiled on a runner of each system), runs the smoke test on the ones that can run on the runner, packs the NuGet packages, builds the multi-architecture Docker image and creates the GitHub release with the checksums and attestations. Packages are also pushed to nuget.org when the `NUGET_API_KEY` secret is set, and to GitHub Packages. After the first Docker push, make the `acmtools` package public in the GitHub package settings if you want anyone to pull it.
+
+`Publish.ps1` and `GitPublish.ps1` build the same executables locally with PowerShell.
 
 ## Notes
 

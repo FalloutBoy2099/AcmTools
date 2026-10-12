@@ -8,4 +8,18 @@
     <FileVersion>2026.10.11.2</FileVersion>
   </PropertyGroup>
 
+  <PropertyGroup Label="NuGet">
+    <PackageId>AcmTools</PackageId>
+    <Description>Library for Fallout/Interplay ACM audio: native decoder, encoder with the codec's sub-band transform, WAV reader and writer, and FFmpeg import/export for other formats.</Description>
+    <PackageTags>fallout;interplay;acm;audio;codec</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/FalloutBoy2099/AcmTools</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/FalloutBoy2099/AcmTools</PackageProjectUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
 </Project>

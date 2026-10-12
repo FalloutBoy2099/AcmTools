@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore
+        run: dotnet restore AcmTools.slnx
+
+      - name: Build
+        run: dotnet build AcmTools.slnx -c Release --no-restore -warnaserror
+
+      # The unit tests are optional: this step runs as soon as a *.Tests.csproj is part of the repository.
+      - name: Test
+        if: ${{ hashFiles('**/*.Tests.csproj') != '' }}
+        run: dotnet test AcmTools.slnx -c Release --no-build
+
+      - name: Publish the command line
+        run: dotnet publish AcmTools.Cli/AcmTools.Cli.csproj -c Release --no-build -o out
+
+      - name: Install FFmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          flags=""
+          if [ "$RUNNER_OS" = "Linux" ]; then flags="--with-ffmpeg"; fi
+          python .github/scripts/smoke_test.py --cli "dotnet out/AcmTools.Cli.dll" $flags
+
+  native-aot:
+    name: NativeAOT build (linux-x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the native toolchain
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Publish with NativeAOT
+        run: dotnet publish AcmTools.Cli/AcmTools.Cli.csproj -c Release -r linux-x64 -p:PublishAot=true -p:DebugType=None -o out-aot
+
+      - name: Smoke test
+        run: python .github/scripts/smoke_test.py --cli "out-aot/AcmTools.Cli"
+
+  format:
+    name: Code style (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Check the formatting
+        run: dotnet format AcmTools.slnx --verify-no-changes --verbosity diagnostic

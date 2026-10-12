@@ -37,6 +37,12 @@ namespace AcmTools.Cli
 					return 0;
 				}
 
+				if (args[0] is "--version" or "-v" or "version")
+				{
+					AnsiConsole.WriteLine($"AcmTools {GetVersion()}");
+					return 0;
+				}
+
 				if (CommandLine.IsHelpToken(args[0]))
 				{
 					PrintHelp();
@@ -98,6 +104,15 @@ namespace AcmTools.Cli
 			}
 
 			return [.. remaining];
+		}
+
+		private static String GetVersion()
+		{
+			String? version = typeof(CliApplication).Assembly
+				.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+				.OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+				.FirstOrDefault()?.InformationalVersion;
+			return version ?? typeof(CliApplication).Assembly.GetName().Version?.ToString() ?? "unknown";
 		}
 
 		private static Boolean IsInteractive()

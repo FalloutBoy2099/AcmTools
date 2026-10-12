@@ -21,4 +21,19 @@
     <FileVersion>2026.10.11.5</FileVersion>
   </PropertyGroup>
 
+  <PropertyGroup Label="NuGet">
+    <PackageId>AcmTools.Cli</PackageId>
+    <Description>Command line tool to convert Fallout/Interplay ACM audio to and from WAV, MP3, OGG, FLAC and more (install with: dotnet tool install -g AcmTools.Cli).</Description>
+    <PackageTags>fallout;interplay;acm;audio;converter;tool</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/FalloutBoy2099/AcmTools</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/FalloutBoy2099/AcmTools</PackageProjectUrl>
+    <ToolCommandName>acmconverter</ToolCommandName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
 </Project>

@@ -1,0 +1,399 @@
+name: Release
+
+# Push a tag such as v1.4.0 (or v1.4.0-rc.1 for a pre-release), or run the workflow by hand.
+# One release carries, for Windows, Linux and macOS on x64 and arm64:
+#   - acmconverter-<version>-<rid>-dotnet.zip      small executable, needs the .NET 10 runtime installed
+#   - acmconverter-<version>-<rid>-standalone.zip  self-contained executable, nothing to install
+#   - acmconverter-<version>-<rid>-native.zip      NativeAOT executable: starts in a few milliseconds, nothing to install
+#   - AcmTools.<version>.nupkg                     the library (NuGet)
+#   - AcmTools.Cli.<version>.nupkg                 the command line as a .NET tool (dotnet tool install -g AcmTools.Cli)
+#   - SHA256SUMS.txt and signed build provenance attestations
+# and a multi-architecture Docker image on ghcr.io.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, without the v (for example 1.4.0 or 1.4.0-rc.1)
+        required: true
+        type: string
+      prerelease:
+        description: Mark the release as a pre-release
+        type: boolean
+        default: false
+      draft:
+        description: Create the release as a draft
+        type: boolean
+        default: false
+      nuget:
+        description: Push the packages to nuget.org (needs the NUGET_API_KEY secret)
+        type: boolean
+        default: true
+      docker:
+        description: Publish the Docker image to ghcr.io
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.values.outputs.version }}
+      tag: ${{ steps.values.outputs.tag }}
+      prerelease: ${{ steps.values.outputs.prerelease }}
+      draft: ${{ steps.values.outputs.draft }}
+      nuget: ${{ steps.values.outputs.nuget }}
+      docker: ${{ steps.values.outputs.docker }}
+    steps:
+      - id: values
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+          INPUT_NUGET: ${{ inputs.nuget }}
+          INPUT_DOCKER: ${{ inputs.docker }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            version="${INPUT_VERSION#v}"
+            prerelease="$INPUT_PRERELEASE"
+            draft="$INPUT_DRAFT"
+            nuget="$INPUT_NUGET"
+            docker="$INPUT_DOCKER"
+          else
+            version="${REF_NAME#v}"
+            prerelease=false
+            draft=false
+            nuget=true
+            docker=true
+          fi
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not a valid version (expected 1.2.3 or 1.2.3-rc.1)"
+            exit 1
+          fi
+          if [[ "$version" == *-* ]]; then prerelease=true; fi
+
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+            echo "draft=$draft"
+            echo "nuget=$nuget"
+            echo "docker=$docker"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version (pre-release: $prerelease, draft: $draft)"
+
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  managed:
+    name: ${{ matrix.rid }} (${{ matrix.mode }})
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, win-arm64, linux-x64, linux-arm64, osx-x64, osx-arm64]
+        mode: [dotnet, standalone]
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Publish
+        run: |
+          options=(--self-contained false)
+          if [ "${{ matrix.mode }}" = "standalone" ]; then
+            options=(--self-contained true -p:EnableCompressionInSingleFile=true)
+          fi
+          dotnet publish AcmTools.Cli/AcmTools.Cli.csproj -c Release -r "${{ matrix.rid }}" "${options[@]}" \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugType=None -p:DebugSymbols=false -p:Version="$VERSION" -o publish
+
+      - name: Smoke test (runs on linux-x64 only)
+        if: matrix.rid == 'linux-x64'
+        run: python .github/scripts/smoke_test.py --cli "publish/AcmTools.Cli"
+
+      - name: Package
+        run: |
+          case "${{ matrix.rid }}" in
+            win-*)   source=AcmTools.Cli.exe; name=AcmConverter.exe ;;
+            linux-*) source=AcmTools.Cli;     name=acmconverter ;;
+            *)       source=AcmTools.Cli;     name=AcmConverter ;;
+          esac
+          mkdir -p dist
+          python .github/scripts/make_zip.py \
+            "dist/acmconverter-$VERSION-${{ matrix.rid }}-${{ matrix.mode }}.zip" \
+            "publish/$source=$name:x" "README.md=README.md"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-managed-${{ matrix.rid }}-${{ matrix.mode }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  native:
+    name: ${{ matrix.rid }} (native)
+    needs: [prepare, ci]
+    runs-on: ${{ matrix.os }}
+    # NativeAOT compiles for the operating system it runs on, so every target has its own runner.
+    # The Windows arm64 runner is the newest one: a failure there must not block the other assets.
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rid: win-x64,     os: windows-latest,    experimental: false }
+          - { rid: win-arm64,   os: windows-11-arm,    experimental: true }
+          - { rid: linux-x64,   os: ubuntu-latest,     experimental: false }
+          - { rid: linux-arm64, os: ubuntu-24.04-arm,  experimental: false }
+          - { rid: osx-x64,     os: macos-15-intel,    experimental: false }
+          - { rid: osx-arm64,   os: macos-latest,      experimental: false }
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the native toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y clang zlib1g-dev
+
+      - name: Publish with NativeAOT
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PATH="$PATH:/c/Program Files (x86)/Microsoft Visual Studio/Installer"
+          fi
+          dotnet publish AcmTools.Cli/AcmTools.Cli.csproj -c Release -r "${{ matrix.rid }}" \
+            -p:PublishAot=true -p:DebugType=None -p:DebugSymbols=false -p:Version="$VERSION" -o publish
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          exe=publish/AcmTools.Cli
+          if [ "$RUNNER_OS" = "Windows" ]; then exe=publish/AcmTools.Cli.exe; fi
+          python .github/scripts/smoke_test.py --cli "$exe"
+
+      - name: Package
+        shell: bash
+        run: |
+          case "${{ matrix.rid }}" in
+            win-*)   source=AcmTools.Cli.exe; name=AcmConverter.exe ;;
+            linux-*) source=AcmTools.Cli;     name=acmconverter ;;
+            *)       source=AcmTools.Cli;     name=AcmConverter ;;
+          esac
+          mkdir -p dist
+          python .github/scripts/make_zip.py \
+            "dist/acmconverter-$VERSION-${{ matrix.rid }}-native.zip" \
+            "publish/$source=$name:x" "README.md=README.md"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-native-${{ matrix.rid }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  packages:
+    name: NuGet packages
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Pack the library
+        run: dotnet pack AcmTools/AcmTools.csproj -c Release -p:Version="$VERSION" -o dist
+
+      - name: Pack the command line as a .NET tool
+        run: dotnet pack AcmTools.Cli/AcmTools.Cli.csproj -c Release -p:Version="$VERSION" -p:PackAsTool=true -o dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: asset-packages
+          path: dist/*.nupkg
+          if-no-files-found: error
+
+  docker:
+    name: Docker image
+    needs: [prepare, ci]
+    if: needs.prepare.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build for a quick check
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: acmtools:check
+          build-args: VERSION=${{ env.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run the image
+        run: |
+          docker run --rm acmtools:check --version
+          docker run --rm acmtools:check --help
+          docker run --rm --entrypoint ffmpeg acmtools:check -version > /dev/null
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ env.VERSION }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.prerelease != 'true' }}
+
+      - name: Publish for amd64 and arm64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ env.VERSION }}
+          cache-from: type=gha
+
+  release:
+    name: Publish the release
+    needs: [prepare, managed, native, packages]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: asset-*
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Attest the build provenance
+        continue-on-error: true
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/*.nupkg
+
+      - name: Create or update the GitHub release
+        env:
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          DRAFT: ${{ needs.prepare.outputs.draft }}
+        run: |
+          cat > notes.md <<EOF
+          ## Downloads
+
+          | Package | What it is |
+          |---|---|
+          | \`acmconverter-$VERSION-<system>-native.zip\` | NativeAOT executable: instant start, nothing to install |
+          | \`acmconverter-$VERSION-<system>-standalone.zip\` | Self-contained executable: nothing to install |
+          | \`acmconverter-$VERSION-<system>-dotnet.zip\` | Small executable, needs the [.NET 10 runtime](https://dotnet.microsoft.com/download/dotnet/10.0) |
+
+          \`<system>\` is \`win-x64\`, \`win-arm64\`, \`linux-x64\`, \`linux-arm64\`, \`osx-x64\` or \`osx-arm64\` (Apple Silicon).
+
+          \`\`\`
+          dotnet tool install -g AcmTools.Cli          # command line, from NuGet
+          dotnet add package AcmTools                  # library
+          docker run --rm -v "\$PWD:/data" ghcr.io/${GITHUB_REPOSITORY,,}:$VERSION --help
+          \`\`\`
+
+          Verify a download with \`SHA256SUMS.txt\` or \`gh attestation verify <file> --repo $GITHUB_REPOSITORY\`.
+          FFmpeg is only needed to read or write formats other than WAV and ACM.
+          On macOS the executables are not notarized: if Gatekeeper blocks one, run \`xattr -d com.apple.quarantine <file>\`.
+
+          ## Changes
+
+          EOF
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            flags=()
+            if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
+            if [ "$DRAFT" = "true" ]; then flags+=(--draft); fi
+            gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AcmTools $VERSION" \
+              --notes-file notes.md --generate-notes "${flags[@]}"
+          fi
+
+      - name: Push the packages to nuget.org
+        if: needs.prepare.outputs.nuget == 'true' && env.NUGET_API_KEY != ''
+        run: |
+          dotnet nuget push "dist/*.nupkg" --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Push the packages to GitHub Packages
+        continue-on-error: true
+        run: |
+          dotnet nuget push "dist/*.nupkg" --api-key "$GH_TOKEN" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
