@@ -1,23 +1,23 @@
+# Dependabot version updates are switched off (a limit of 0 opens no pull request).
+# Security updates stay on: GitHub still proposes a fix when a vulnerability is reported.
+# Raise the limit, for example to 5, to receive version bump pull requests again.
 version: 2
 
 updates:
   - package-ecosystem: nuget
     directory: /
+    open-pull-requests-limit: 0
     schedule:
-      interval: weekly
-    groups:
-      nuget:
-        patterns: ['*']
+      interval: monthly
 
   - package-ecosystem: github-actions
     directory: /
+    open-pull-requests-limit: 0
     schedule:
-      interval: weekly
-    groups:
-      actions:
-        patterns: ['*']
+      interval: monthly
 
   - package-ecosystem: docker
     directory: /
+    open-pull-requests-limit: 0
     schedule:
-      interval: weekly
+      interval: monthly
