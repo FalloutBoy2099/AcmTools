@@ -23,43 +23,57 @@ namespace AcmTools.Cli.Localization
 			[CliLanguage.Russian] = RussianTexts.Texts
 		};
 
-		public static CliLanguage Current { get; private set; } = DetectSystemLanguage();
-
 		public static IReadOnlyList<LanguageOption> Languages { get; } =
 		[
-			new(CliLanguage.English, "English"),
-			new(CliLanguage.French, "Français"),
-			new(CliLanguage.Spanish, "Español"),
-			new(CliLanguage.Italian, "Italiano"),
-			new(CliLanguage.German, "Deutsch"),
-			new(CliLanguage.Portuguese, "Português"),
-			new(CliLanguage.Polish, "Polski"),
-			new(CliLanguage.Czech, "Čeština"),
-			new(CliLanguage.Swedish, "Svenska"),
-			new(CliLanguage.Chinese, "中文"),
-			new(CliLanguage.Russian, "Русский")
+			new(CliLanguage.English, "en", "en-US", "English"),
+			new(CliLanguage.French, "fr", "fr-FR", "Français"),
+			new(CliLanguage.Spanish, "es", "es-ES", "Español"),
+			new(CliLanguage.Italian, "it", "it-IT", "Italiano"),
+			new(CliLanguage.German, "de", "de-DE", "Deutsch"),
+			new(CliLanguage.Portuguese, "pt", "pt-PT", "Português"),
+			new(CliLanguage.Polish, "pl", "pl-PL", "Polski"),
+			new(CliLanguage.Czech, "cs", "cs-CZ", "Čeština"),
+			new(CliLanguage.Swedish, "sv", "sv-SE", "Svenska"),
+			new(CliLanguage.Chinese, "zh", "zh-CN", "中文"),
+			new(CliLanguage.Russian, "ru", "ru-RU", "Русский")
 		];
+
+		public static CliLanguage Current { get; private set; } = DetectSystemLanguage();
+
+		/// <summary>The codes accepted by <c>--lang</c>, for messages: "en, fr, es...".</summary>
+		public static String LanguageCodes => String.Join(", ", Languages.Select(option => option.Code));
 
 		public static void SetLanguage(CliLanguage language)
 		{
 			Current = language;
-			String cultureName = language switch
-			{
-				CliLanguage.French => "fr-FR",
-				CliLanguage.Spanish => "es-ES",
-				CliLanguage.Italian => "it-IT",
-				CliLanguage.German => "de-DE",
-				CliLanguage.Portuguese => "pt-PT",
-				CliLanguage.Polish => "pl-PL",
-				CliLanguage.Czech => "cs-CZ",
-				CliLanguage.Swedish => "sv-SE",
-				CliLanguage.Chinese => "zh-CN",
-				CliLanguage.Russian => "ru-RU",
-				_ => "en-US"
-			};
-			CultureInfo culture = CultureInfo.GetCultureInfo(cultureName);
+			CultureInfo culture = CultureInfo.GetCultureInfo(Languages.First(option => option.Language == language).CultureName);
 			CultureInfo.CurrentCulture = culture;
 			CultureInfo.CurrentUICulture = culture;
+		}
+
+		/// <summary>Finds a language from its code ("fr"), culture ("fr-FR", "fr_CA"), enum name ("French") or display name ("Français").</summary>
+		public static Boolean TryParseLanguage(String? text, out CliLanguage language)
+		{
+			language = CliLanguage.English;
+			String? trimmed = text?.Trim();
+			if (String.IsNullOrEmpty(trimmed))
+			{
+				return false;
+			}
+
+			String code = trimmed.Split('-', '_')[0];
+			foreach (LanguageOption option in Languages)
+			{
+				if (String.Equals(option.Code, code, StringComparison.OrdinalIgnoreCase)
+					|| String.Equals(option.Language.ToString(), trimmed, StringComparison.OrdinalIgnoreCase)
+					|| String.Equals(option.DisplayName, trimmed, StringComparison.CurrentCultureIgnoreCase))
+				{
+					language = option.Language;
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		public static String Get(String key)
@@ -84,20 +98,8 @@ namespace AcmTools.Cli.Localization
 
 		private static CliLanguage DetectSystemLanguage()
 		{
-			return CultureInfo.CurrentUICulture.TwoLetterISOLanguageName.ToLowerInvariant() switch
-			{
-				"fr" => CliLanguage.French,
-				"es" => CliLanguage.Spanish,
-				"it" => CliLanguage.Italian,
-				"de" => CliLanguage.German,
-				"pt" => CliLanguage.Portuguese,
-				"pl" => CliLanguage.Polish,
-				"cs" => CliLanguage.Czech,
-				"sv" => CliLanguage.Swedish,
-				"zh" => CliLanguage.Chinese,
-				"ru" => CliLanguage.Russian,
-				_ => CliLanguage.English
-			};
+			String code = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+			return Languages.FirstOrDefault(option => String.Equals(option.Code, code, StringComparison.OrdinalIgnoreCase)).Language;
 		}
 	}
 }

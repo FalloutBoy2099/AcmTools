@@ -10,6 +10,9 @@ namespace AcmTools.Cli
 
 	internal sealed class CliApplication
 	{
+		private const Int32 CancelledExitCode = 130;
+		private const String LanguageOptionName = "--lang";
+
 		private readonly AcmConverter converter = new();
 		private readonly IReadOnlyList<CliCommand> commands;
 
@@ -22,6 +25,7 @@ namespace AcmTools.Cli
 		{
 			try
 			{
+				args = ApplyLanguageOption(args);
 				if (args.Length == 0)
 				{
 					if (IsInteractive())
@@ -46,13 +50,54 @@ namespace AcmTools.Cli
 					return 1;
 				}
 
-				return await command.RunAsync(args[1..]).ConfigureAwait(false);
+				using ConsoleCancellation cancellation = new();
+				return await command.RunAsync(args[1..], cancellation.Token).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException)
+			{
+				ConsoleReport.WriteError(AppText.Get("Cancelled"));
+				return CancelledExitCode;
 			}
 			catch (Exception ex)
 			{
 				ConsoleReport.WriteError(ex.Message);
 				return 1;
 			}
+		}
+
+		/// <summary>Applies and removes the global <c>--lang code</c> / <c>--lang=code</c> option wherever it appears.</summary>
+		private static String[] ApplyLanguageOption(String[] args)
+		{
+			List<String> remaining = [];
+			for (Int32 i = 0; i < args.Length; i++)
+			{
+				String? code = null;
+				if (String.Equals(args[i], LanguageOptionName, StringComparison.OrdinalIgnoreCase))
+				{
+					code = i + 1 < args.Length
+						? args[++i]
+						: throw new CliUsageException(AppText.Format("MissingOptionValue", LanguageOptionName));
+				}
+				else if (args[i].StartsWith(LanguageOptionName + "=", StringComparison.OrdinalIgnoreCase))
+				{
+					code = args[i][(LanguageOptionName.Length + 1)..];
+				}
+
+				if (code is null)
+				{
+					remaining.Add(args[i]);
+				}
+				else if (AppText.TryParseLanguage(code, out CliLanguage language))
+				{
+					AppText.SetLanguage(language);
+				}
+				else
+				{
+					throw new CliUsageException(AppText.Format("UnknownLanguage", code, AppText.LanguageCodes));
+				}
+			}
+
+			return [.. remaining];
 		}
 
 		private static Boolean IsInteractive()
@@ -70,6 +115,7 @@ namespace AcmTools.Cli
 
 			AnsiConsole.WriteLine();
 			AnsiConsole.WriteLine(AppText.Get("HelpFalloutNote"));
+			AnsiConsole.WriteLine(AppText.Format("HelpLangOption", AppText.LanguageCodes));
 		}
 	}
 }

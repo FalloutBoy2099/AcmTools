@@ -3,6 +3,7 @@ namespace AcmTools.Cli.Interactive
 	using System;
 	using System.Globalization;
 	using System.IO;
+	using AcmTools.Acm;
 	using Spectre.Console;
 	using Localization;
 
@@ -35,6 +36,20 @@ namespace AcmTools.Cli.Interactive
 					.Validate(value => value >= min && value <= max
 						? ValidationResult.Success()
 						: ValidationResult.Error(AppText.Format("RangeError", min.ToString(CultureInfo.InvariantCulture), max.ToString(CultureInfo.InvariantCulture)))));
+		}
+
+		public static AcmChannelMode Channels()
+		{
+			return AnsiConsole.Prompt(
+				new SelectionPrompt<AcmChannelMode>()
+					.Title(AppText.Get("ChannelsTitle"))
+					.UseConverter(mode => mode switch
+					{
+						AcmChannelMode.Mono => AppText.Get("ChannelsMono"),
+						AcmChannelMode.Stereo => AppText.Get("ChannelsStereo"),
+						_ => AppText.Format("ChannelsAuto", (Int32)AcmDecodeOptions.DefaultStereoThresholdSeconds)
+					})
+					.AddChoices(AcmChannelMode.Auto, AcmChannelMode.Mono, AcmChannelMode.Stereo));
 		}
 
 		public static Boolean YesNo(String label, Boolean defaultValue)

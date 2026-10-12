@@ -1,32 +1,50 @@
 namespace AcmTools.Acm
 {
 	using System;
-	using System.Collections.Generic;
 	using System.IO;
+	using System.Threading;
 	using Audio;
 
 	public sealed class AcmDecoder
 	{
 		private const Int32 AcmId = 0x032897;
 		private const Int32 WavcId = 0x564157;
+		private const Int32 MidBufferCenter = 32768;
+
+		// Upper bound of decoded values (about 3 hours at 22 kHz); protects against corrupt headers requesting gigabytes.
+		private const Int32 MaxTotalValues = 1 << 28;
+
+		private const Int32 FillerZero = 0;
+		private const Int32 FillerLinearMin = 3;
+		private const Int32 FillerLinearMax = 16;
+		private const Int32 FillerK13 = 17;
+		private const Int32 FillerK12 = 18;
+		private const Int32 FillerT15 = 19;
+		private const Int32 FillerK24 = 20;
+		private const Int32 FillerK23 = 21;
+		private const Int32 FillerT27 = 22;
+		private const Int32 FillerK35 = 23;
+		private const Int32 FillerK34 = 24;
+		private const Int32 FillerK45 = 26;
+		private const Int32 FillerK44 = 27;
+		private const Int32 FillerT37 = 29;
 
 		private static readonly Int32[] Map1Bit = [-1, +1];
 		private static readonly Int32[] Map2BitNear = [-2, -1, +1, +2];
 		private static readonly Int32[] Map2BitFar = [-3, -2, +2, +3];
 		private static readonly Int32[] Map3Bit = [-4, -3, -2, -1, +1, +2, +3, +4];
-		private static readonly Int32[] Mul3X3 = GenerateMul3X3();
-		private static readonly Int32[] Mul3X5 = GenerateMul3X5();
-		private static readonly Int32[] Mul2X11 = GenerateMul2X11();
 
-		public PcmAudioTrack Decode(String path, AcmDecodeOptions? options = null)
+		public PcmAudioTrack Decode(String path, AcmDecodeOptions? options = null, CancellationToken cancellationToken = default)
 		{
 			options ??= new AcmDecodeOptions();
 			Byte[] bytes = File.ReadAllBytes(path);
 			DecoderState state = ReadHeader(bytes, options);
-			List<Byte> pcm = new(state.TotalValues * 2);
+			Byte[] pcm = new Byte[state.TotalValues * 2];
+			Int32 written = 0;
 
 			while (state.StreamPosition < state.TotalValues)
 			{
+				cancellationToken.ThrowIfCancellationRequested();
 				if (!TryDecodeBlock(state))
 				{
 					break;
@@ -42,21 +60,15 @@ namespace AcmTools.Acm
 				{
 					Int32 value = state.Block[i] >> state.Level;
 					Int16 sample = (Int16)Math.Clamp(value, Int16.MinValue, Int16.MaxValue);
-					pcm.Add((Byte)(sample & 0xFF));
-					pcm.Add((Byte)((sample >> 8) & 0xFF));
+					pcm[written++] = (Byte)(sample & 0xFF);
+					pcm[written++] = (Byte)((sample >> 8) & 0xFF);
 				}
 
 				state.StreamPosition += available;
 			}
 
-			Int32 expectedBytes = state.TotalValues * 2;
-			while (pcm.Count < expectedBytes)
-			{
-				pcm.Add(0);
-				pcm.Add(0);
-			}
-
-			return new PcmAudioTrack(state.Rate, (Int16)state.Channels, 16, [.. pcm]);
+			// A truncated stream is completed with silence (the array is already zeroed).
+			return new PcmAudioTrack(state.Rate, (Int16)state.Channels, 16, pcm);
 		}
 
 		public AcmInfo Inspect(String path, AcmDecodeOptions? options = null)
@@ -110,17 +122,30 @@ namespace AcmTools.Acm
 
 			Int32 totalValues = reader.ReadBits(16) | (reader.ReadBits(16) << 16);
 			Int32 headerChannels = reader.ReadBits(16);
-			Int32 channels = options.ForceFalloutMono ? 1 : headerChannels;
 			Int32 rate = reader.ReadBits(16);
 			Int32 level = reader.ReadBits(4);
 			Int32 rows = reader.ReadBits(12);
 
-			if (totalValues <= 0 || headerChannels is < 1 or > 2 || channels is < 1 or > 2 || rate < 4096 || rows <= 0)
+			if (totalValues <= 0 || totalValues > MaxTotalValues || headerChannels is < 1 or > 2 || rate < 4096 || rows <= 0)
 			{
 				throw new InvalidDataException("The ACM header contains invalid values.");
 			}
 
-			if (!options.ForceFalloutMono && !wavc && channels < 2)
+			// The channel count stored in plain ACM files is unreliable: most speech and sound effects are tagged stereo
+			// although they are mono. In the game files only the music tracks (the sole files longer than a minute when
+			// counted with the channels of the header) are really stereo.
+			Boolean stereo = options.Channels switch
+			{
+				AcmChannelMode.Mono => false,
+				AcmChannelMode.Stereo => true,
+				_ => headerChannels == 2 && (Double)totalValues / headerChannels / rate > options.StereoThresholdSeconds
+			};
+
+			Int32 channels = stereo ? headerChannels : 1;
+
+			// Same rule as the reference decoder (libacm) when stereo is requested explicitly: a plain ACM that claims
+			// to be mono is read as stereo too, only the WAVC wrapper stores a trustworthy count.
+			if (stereo && options.Channels == AcmChannelMode.Stereo && !wavc && channels < 2)
 			{
 				channels = 2;
 			}
@@ -139,12 +164,12 @@ namespace AcmTools.Acm
 			Int32 count = 1 << power;
 			for (Int32 i = 0, x = 0; i < count; i++, x += step)
 			{
-				state.MidBuffer[32768 + i] = x;
+				state.MidBuffer[MidBufferCenter + i] = x;
 			}
 
 			for (Int32 i = 1, x = -step; i <= count; i++, x -= step)
 			{
-				state.MidBuffer[32768 - i] = x;
+				state.MidBuffer[MidBufferCenter - i] = x;
 			}
 
 			for (Int32 col = 0; col < state.Cols; col++)
@@ -165,48 +190,48 @@ namespace AcmTools.Acm
 		{
 			switch (filler)
 			{
-				case 0:
+				case FillerZero:
 					for (Int32 i = 0; i < state.Rows; i++)
 					{
 						SetPos(state, i, col, 0);
 					}
 
 					return;
-				case >= 3 and <= 16:
+				case >= FillerLinearMin and <= FillerLinearMax:
 					FillLinear(state, filler, col);
 					return;
-				case 17:
-					FillK13(state, col);
+				case FillerK13:
+					FillZeroRun(state, col, ReadMap1);
 					return;
-				case 18:
-					FillK12(state, col);
+				case FillerK24:
+					FillZeroRun(state, col, ReadMap2Near);
 					return;
-				case 19:
-					FillT15(state, col);
+				case FillerK35:
+					FillZeroRun(state, col, ReadMap1Or2Far);
 					return;
-				case 20:
-					FillK24(state, col);
+				case FillerK45:
+					FillZeroRun(state, col, ReadMap3);
 					return;
-				case 21:
-					FillK23(state, col);
+				case FillerK12:
+					FillEscaped(state, col, ReadMap1);
 					return;
-				case 22:
-					FillT27(state, col);
+				case FillerK23:
+					FillEscaped(state, col, ReadMap2Near);
 					return;
-				case 23:
-					FillK35(state, col);
+				case FillerK34:
+					FillEscaped(state, col, ReadMap1Or2Far);
 					return;
-				case 24:
-					FillK34(state, col);
+				case FillerK44:
+					FillEscaped(state, col, ReadMap3);
 					return;
-				case 26:
-					FillK45(state, col);
+				case FillerT15:
+					FillPacked(state, col, 3, 5, 3, 1);
 					return;
-				case 27:
-					FillK44(state, col);
+				case FillerT27:
+					FillPacked(state, col, 3, 7, 5, 2);
 					return;
-				case 29:
-					FillT37(state, col);
+				case FillerT37:
+					FillPacked(state, col, 2, 7, 11, 5);
 					return;
 				default:
 					throw new InvalidDataException("The ACM stream uses a corrupt filler code.");
@@ -222,7 +247,8 @@ namespace AcmTools.Acm
 			}
 		}
 
-		private static void FillK13(DecoderState state, Int32 col)
+		// Run-length style fillers: bit 0 = two zero rows, bits 10 = one zero row, bits 11 + payload = a non-zero row.
+		private static void FillZeroRun(DecoderState state, Int32 col, Func<AcmBitReader, Int32> readNonZero)
 		{
 			for (Int32 i = 0; i < state.Rows; i++)
 			{
@@ -240,167 +266,68 @@ namespace AcmTools.Acm
 				}
 				else
 				{
-					SetPos(state, i, col, Map1Bit[state.Reader.ReadBits(1)]);
+					SetPos(state, i, col, readNonZero(state.Reader));
 				}
 			}
 		}
 
-		private static void FillK12(DecoderState state, Int32 col)
+		// One flag bit per row: 0 = zero, 1 + payload = a non-zero row.
+		private static void FillEscaped(DecoderState state, Int32 col, Func<AcmBitReader, Int32> readNonZero)
 		{
 			for (Int32 i = 0; i < state.Rows; i++)
 			{
-				SetPos(state, i, col, state.Reader.ReadBits(1) == 0 ? 0 : Map1Bit[state.Reader.ReadBits(1)]);
+				SetPos(state, i, col, state.Reader.ReadBits(1) == 0 ? 0 : readNonZero(state.Reader));
 			}
 		}
 
-		private static void FillK24(DecoderState state, Int32 col)
+		// Several small values packed in one base-N symbol, first row in the lowest digit.
+		private static void FillPacked(DecoderState state, Int32 col, Int32 valuesPerSymbol, Int32 symbolBits, Int32 radix, Int32 offset)
 		{
-			for (Int32 i = 0; i < state.Rows; i++)
+			Int32 symbolLimit = 1;
+			for (Int32 i = 0; i < valuesPerSymbol; i++)
 			{
-				if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i++, col, 0);
-					if (i < state.Rows)
-					{
-						SetPos(state, i, col, 0);
-					}
-				}
-				else if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i, col, 0);
-				}
-				else
-				{
-					SetPos(state, i, col, Map2BitNear[state.Reader.ReadBits(2)]);
-				}
+				symbolLimit *= radix;
 			}
-		}
 
-		private static void FillK23(DecoderState state, Int32 col)
-		{
-			for (Int32 i = 0; i < state.Rows; i++)
+			for (Int32 row = 0; row < state.Rows; row += valuesPerSymbol)
 			{
-				SetPos(state, i, col, state.Reader.ReadBits(1) == 0 ? 0 : Map2BitNear[state.Reader.ReadBits(2)]);
-			}
-		}
+				Int32 symbol = state.Reader.ReadBits(symbolBits);
+				if (symbol >= symbolLimit)
+				{
+					throw new InvalidDataException("The ACM stream contains an invalid packed symbol.");
+				}
 
-		private static void FillK35(DecoderState state, Int32 col)
-		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				if (state.Reader.ReadBits(1) == 0)
+				for (Int32 k = 0; k < valuesPerSymbol && row + k < state.Rows; k++)
 				{
-					SetPos(state, i++, col, 0);
-					if (i < state.Rows)
-					{
-						SetPos(state, i, col, 0);
-					}
-				}
-				else if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i, col, 0);
-				}
-				else if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i, col, Map1Bit[state.Reader.ReadBits(1)]);
-				}
-				else
-				{
-					SetPos(state, i, col, Map2BitFar[state.Reader.ReadBits(2)]);
+					SetPos(state, row + k, col, symbol % radix - offset);
+					symbol /= radix;
 				}
 			}
 		}
 
-		private static void FillK34(DecoderState state, Int32 col)
+		private static Int32 ReadMap1(AcmBitReader reader)
 		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i, col, 0);
-				}
-				else if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i, col, Map1Bit[state.Reader.ReadBits(1)]);
-				}
-				else
-				{
-					SetPos(state, i, col, Map2BitFar[state.Reader.ReadBits(2)]);
-				}
-			}
+			return Map1Bit[reader.ReadBits(1)];
 		}
 
-		private static void FillK45(DecoderState state, Int32 col)
+		private static Int32 ReadMap2Near(AcmBitReader reader)
 		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i++, col, 0);
-					if (i < state.Rows)
-					{
-						SetPos(state, i, col, 0);
-					}
-				}
-				else if (state.Reader.ReadBits(1) == 0)
-				{
-					SetPos(state, i, col, 0);
-				}
-				else
-				{
-					SetPos(state, i, col, Map3Bit[state.Reader.ReadBits(3)]);
-				}
-			}
+			return Map2BitNear[reader.ReadBits(2)];
 		}
 
-		private static void FillK44(DecoderState state, Int32 col)
+		private static Int32 ReadMap3(AcmBitReader reader)
 		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				SetPos(state, i, col, state.Reader.ReadBits(1) == 0 ? 0 : Map3Bit[state.Reader.ReadBits(3)]);
-			}
+			return Map3Bit[reader.ReadBits(3)];
 		}
 
-		private static void FillT15(DecoderState state, Int32 col)
+		private static Int32 ReadMap1Or2Far(AcmBitReader reader)
 		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				Int32 packed = Mul3X3[state.Reader.ReadBits(5)];
-				SetPos(state, i++, col, (packed & 0x0F) - 1);
-				if (i >= state.Rows) break;
-				SetPos(state, i++, col, ((packed >> 4) & 0x0F) - 1);
-				if (i >= state.Rows) break;
-				SetPos(state, i, col, ((packed >> 8) & 0x0F) - 1);
-			}
-		}
-
-		private static void FillT27(DecoderState state, Int32 col)
-		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				Int32 packed = Mul3X5[state.Reader.ReadBits(7)];
-				SetPos(state, i++, col, (packed & 0x0F) - 2);
-				if (i >= state.Rows) break;
-				SetPos(state, i++, col, ((packed >> 4) & 0x0F) - 2);
-				if (i >= state.Rows) break;
-				SetPos(state, i, col, ((packed >> 8) & 0x0F) - 2);
-			}
-		}
-
-		private static void FillT37(DecoderState state, Int32 col)
-		{
-			for (Int32 i = 0; i < state.Rows; i++)
-			{
-				Int32 packed = Mul2X11[state.Reader.ReadBits(7)];
-				SetPos(state, i++, col, (packed & 0x0F) - 5);
-				if (i >= state.Rows) break;
-				SetPos(state, i, col, ((packed >> 4) & 0x0F) - 5);
-			}
+			return reader.ReadBits(1) == 0 ? Map1Bit[reader.ReadBits(1)] : Map2BitFar[reader.ReadBits(2)];
 		}
 
 		private static void SetPos(DecoderState state, Int32 row, Int32 col, Int32 index)
 		{
-			state.Block[(row << state.Level) + col] = state.MidBuffer[32768 + index];
+			state.Block[(row << state.Level) + col] = state.MidBuffer[MidBufferCenter + index];
 		}
 
 		private static void JuggleBlock(DecoderState state)
@@ -466,44 +393,6 @@ namespace AcmTools.Acm
 				wrap[wrapOffset - 2] = r0;
 				wrap[wrapOffset - 1] = r1;
 			}
-		}
-
-		private static Int32[] GenerateMul3X3()
-		{
-			Int32[] result = new Int32[27];
-			for (Int32 x3 = 0; x3 < 3; x3++)
-			for (Int32 x2 = 0; x2 < 3; x2++)
-			for (Int32 x1 = 0; x1 < 3; x1++)
-			{
-				result[x1 + x2 * 3 + x3 * 9] = x1 + (x2 << 4) + (x3 << 8);
-			}
-
-			return result;
-		}
-
-		private static Int32[] GenerateMul3X5()
-		{
-			Int32[] result = new Int32[125];
-			for (Int32 x3 = 0; x3 < 5; x3++)
-			for (Int32 x2 = 0; x2 < 5; x2++)
-			for (Int32 x1 = 0; x1 < 5; x1++)
-			{
-				result[x1 + x2 * 5 + x3 * 25] = x1 + (x2 << 4) + (x3 << 8);
-			}
-
-			return result;
-		}
-
-		private static Int32[] GenerateMul2X11()
-		{
-			Int32[] result = new Int32[121];
-			for (Int32 x2 = 0; x2 < 11; x2++)
-			for (Int32 x1 = 0; x1 < 11; x1++)
-			{
-				result[x1 + x2 * 11] = x1 + (x2 << 4);
-			}
-
-			return result;
 		}
 
 		private sealed class DecoderState

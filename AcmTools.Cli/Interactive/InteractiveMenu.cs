@@ -2,6 +2,7 @@ namespace AcmTools.Cli.Interactive
 {
 	using System;
 	using System.IO;
+	using System.Threading;
 	using Spectre.Console;
 	using AcmTools.Acm;
 	using AcmTools.Conversion;
@@ -38,20 +39,31 @@ namespace AcmTools.Cli.Interactive
 				}
 
 				AnsiConsole.WriteLine();
-				switch (action)
+				try
 				{
-					case MenuAction.Inspect:
-						Inspect();
-						break;
-					case MenuAction.ToAudio:
-						await ToAudioAsync().ConfigureAwait(false);
-						break;
-					case MenuAction.ToAcm:
-						await ToAcmAsync().ConfigureAwait(false);
-						break;
-					case MenuAction.Language:
-						ChangeLanguage();
-						break;
+					switch (action)
+					{
+						case MenuAction.Inspect:
+							Inspect();
+							break;
+						case MenuAction.ToAudio:
+							await ToAudioAsync().ConfigureAwait(false);
+							break;
+						case MenuAction.ToAcm:
+							await ToAcmAsync().ConfigureAwait(false);
+							break;
+						case MenuAction.Language:
+							ChangeLanguage();
+							break;
+					}
+				}
+				catch (OperationCanceledException)
+				{
+					ConsoleReport.WriteError(AppText.Get("Cancelled"));
+				}
+				catch (Exception ex)
+				{
+					ConsoleReport.WriteError(ex.Message);
 				}
 
 				AnsiConsole.WriteLine();
@@ -63,7 +75,7 @@ namespace AcmTools.Cli.Interactive
 			String inputPath = Prompts.ExistingPath(AppText.Get("SourceAcm"));
 			AcmDecodeOptions options = new()
 			{
-				ForceFalloutMono = Prompts.YesNo(AppText.Get("FalloutMonoConfirm"), true)
+				Channels = Prompts.Channels()
 			};
 			ConsoleReport.WriteInspection(converter.Inspect(inputPath, options));
 		}
@@ -75,12 +87,13 @@ namespace AcmTools.Cli.Interactive
 			AudioFormat format = PromptOutputFormat(outputPath);
 			AcmDecodeOptions options = new()
 			{
-				ForceFalloutMono = Prompts.YesNo(AppText.Get("FalloutMonoConfirm"), true)
+				Channels = Prompts.Channels(),
+				Overwrite = Prompts.YesNo(AppText.Get("OverwriteConfirm"), true)
 			};
 
 			ConversionResult result = await RunWithStatusAsync(
 				AppText.Get("ToAudioStatus"),
-				() => converter.ConvertAcmToAudioAsync(inputPath, outputPath, format, options)).ConfigureAwait(false);
+				token => converter.ConvertAcmToAudioAsync(inputPath, outputPath, format, options, token)).ConfigureAwait(false);
 			ConsoleReport.WriteResult(result);
 		}
 
@@ -93,16 +106,23 @@ namespace AcmTools.Cli.Interactive
 
 			String inputPath = Prompts.ExistingPath(AppText.Get("SourceAudio"));
 			String outputPath = Prompts.OutputPath(AppText.Get("TargetAcm"), Path.ChangeExtension(inputPath, ".acm"));
+			Int32 sampleRate = Prompts.Integer(AppText.Get("SampleRatePrompt"), AcmEncodeOptions.DefaultSampleRate, AcmEncodeOptions.MinSampleRate, AcmEncodeOptions.MaxSampleRate);
+			Boolean compressed = Prompts.YesNo(AppText.Get("TransformConfirm"), true);
 			AcmEncodeOptions options = new()
 			{
-				SampleRate = Prompts.Integer(AppText.Get("SampleRatePrompt"), AcmEncodeOptions.DefaultSampleRate, AcmEncodeOptions.MinSampleRate, AcmEncodeOptions.MaxSampleRate),
-				ForceMono = true,
+				SampleRate = sampleRate,
+				TransformLevel = compressed ? AcmEncodeOptions.DefaultTransformLevel : 0,
+				TargetSnrDb = compressed ? Prompts.Integer(AppText.Get("SnrPrompt"), (Int32)AcmEncodeOptions.DefaultTargetSnrDb, 10, 90) : AcmEncodeOptions.DefaultTargetSnrDb,
+				MaxBitsPerSample = compressed
+					? AcmEncodeOptions.LosslessBitsPerSample
+					: Prompts.Integer(AppText.Get("MaxBitsPrompt"), AcmEncodeOptions.LosslessBitsPerSample, AcmEncodeOptions.MinBitsPerSample, AcmEncodeOptions.LosslessBitsPerSample),
+				Channels = Prompts.Channels(),
 				Overwrite = Prompts.YesNo(AppText.Get("OverwriteConfirm"), true)
 			};
 
 			ConversionResult result = await RunWithStatusAsync(
 				AppText.Get("ToAcmStatus"),
-				() => converter.ConvertAudioToAcmAsync(inputPath, outputPath, options)).ConfigureAwait(false);
+				token => converter.ConvertAudioToAcmAsync(inputPath, outputPath, options, token)).ConfigureAwait(false);
 			ConsoleReport.WriteResult(result);
 		}
 
@@ -133,12 +153,13 @@ namespace AcmTools.Cli.Interactive
 			return choice == AudioFormat.Auto ? automatic : choice;
 		}
 
-		private static Task<ConversionResult> RunWithStatusAsync(String label, Func<Task<ConversionResult>> action)
+		private static async Task<ConversionResult> RunWithStatusAsync(String label, Func<CancellationToken, Task<ConversionResult>> action)
 		{
-			return AnsiConsole.Status()
+			using ConsoleCancellation cancellation = new();
+			return await AnsiConsole.Status()
 				.Spinner(Spinner.Known.Dots)
 				.SpinnerStyle(Style.Parse("cyan"))
-				.StartAsync(label, _ => action());
+				.StartAsync(label, _ => action(cancellation.Token)).ConfigureAwait(false);
 		}
 
 		private static String Describe(MenuAction action)

@@ -6,6 +6,7 @@ namespace AcmTools.Conversion
 	using System.Diagnostics;
 	using System.Globalization;
 	using System.IO;
+	using System.Threading;
 
 	internal sealed class SystemFfmpegAudioTranscoder
 	{
@@ -25,7 +26,7 @@ namespace AcmTools.Conversion
 			[AudioFormat.Mpc] = ["-c:a", "mpc7"]
 		};
 
-		public void DecodeToWav(String inputPath, String outputWavPath, Int32? sampleRate = null, Boolean mono = false)
+		public Task DecodeToWavAsync(String inputPath, String outputWavPath, Int32? sampleRate, Boolean mono, CancellationToken cancellationToken)
 		{
 			List<String> args = ["-vn"];
 			if (mono)
@@ -39,20 +40,20 @@ namespace AcmTools.Conversion
 			}
 
 			args.AddRange(["-c:a", "pcm_s16le"]);
-			Run(inputPath, outputWavPath, args);
+			return RunAsync(inputPath, outputWavPath, args, cancellationToken);
 		}
 
-		public void EncodeFromWav(String inputWavPath, String outputPath, AudioFormat format)
+		public Task EncodeFromWavAsync(String inputWavPath, String outputPath, AudioFormat format, CancellationToken cancellationToken)
 		{
 			if (!EncoderArguments.TryGetValue(format, out String[]? args))
 			{
 				throw new NotSupportedException($"FFmpeg export is not used for {format}.");
 			}
 
-			Run(inputWavPath, outputPath, args);
+			return RunAsync(inputWavPath, outputPath, args, cancellationToken);
 		}
 
-		private static void Run(String inputPath, String outputPath, IEnumerable<String> codecArguments)
+		private static async Task RunAsync(String inputPath, String outputPath, IEnumerable<String> codecArguments, CancellationToken cancellationToken)
 		{
 			String? directory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
 			if (!String.IsNullOrWhiteSpace(directory))
@@ -94,15 +95,55 @@ namespace AcmTools.Conversion
 				throw new NotSupportedException(MissingFfmpegMessage, ex);
 			}
 
-			String standardError = process.StandardError.ReadToEnd();
-			String standardOutput = process.StandardOutput.ReadToEnd();
+			// Both pipes are drained concurrently so that a chatty FFmpeg can never block on a full pipe.
+			Task<String> standardError = process.StandardError.ReadToEndAsync(CancellationToken.None);
+			Task<String> standardOutput = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
 
-			process.WaitForExit();
+			try
+			{
+				await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+			}
+			catch (OperationCanceledException)
+			{
+				KillQuietly(process);
+				DeleteQuietly(outputPath);
+				throw;
+			}
 
+			String errorText = await standardError.ConfigureAwait(false);
+			String outputText = await standardOutput.ConfigureAwait(false);
 			if (process.ExitCode != 0)
 			{
-				String details = String.IsNullOrWhiteSpace(standardError) ? standardOutput : standardError;
+				String details = String.IsNullOrWhiteSpace(errorText) ? outputText : errorText;
 				throw new InvalidOperationException($"FFmpeg audio conversion failed with exit code {process.ExitCode}. {details.Trim()}");
+			}
+		}
+
+		private static void KillQuietly(Process process)
+		{
+			try
+			{
+				if (!process.HasExited)
+				{
+					process.Kill(true);
+				}
+			}
+			catch (InvalidOperationException)
+			{
+			}
+		}
+
+		private static void DeleteQuietly(String path)
+		{
+			try
+			{
+				File.Delete(path);
+			}
+			catch (IOException)
+			{
+			}
+			catch (UnauthorizedAccessException)
+			{
 			}
 		}
 	}

@@ -6,5 +6,5 @@ namespace AcmTools.Conversion
 	public sealed record ConversionResult(
 		String InputPath,
 		String OutputPath,
-		IReadOnlyList<String> Steps);
+		IReadOnlyList<ConversionStep> Steps);
 }

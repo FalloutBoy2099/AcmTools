@@ -66,6 +66,11 @@ namespace AcmTools.Cli
 			return flags.Contains(name);
 		}
 
+		public String? GetString(String name)
+		{
+			return values.GetValueOrDefault(name);
+		}
+
 		public Int32 GetInt32(String name, Int32 defaultValue, Int32 min, Int32 max)
 		{
 			if (!values.TryGetValue(name, out String? text))

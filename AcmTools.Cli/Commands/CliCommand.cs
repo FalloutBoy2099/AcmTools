@@ -2,6 +2,7 @@ namespace AcmTools.Cli.Commands
 {
 	using System;
 	using System.Collections.Generic;
+	using System.Threading;
 	using AcmTools.Acm;
 	using AcmTools.Conversion;
 	using Localization;
@@ -9,12 +10,19 @@ namespace AcmTools.Cli.Commands
 	internal abstract class CliCommand(String name, String arguments, Int32 positionalCount, IReadOnlyCollection<String> flags, IReadOnlyCollection<String> valueOptions)
 	{
 		protected const String TrustHeaderChannelsFlag = "--trust-header-channels";
+		protected const String ChannelsOption = "--channels";
+		protected const String NoOverwriteFlag = "--no-overwrite";
+		protected const String RecursiveFlag = "--recursive";
+		protected const String JobsOption = "--jobs";
+		protected const String FormatOption = "--format";
+
+		private const Int32 MaxJobs = 64;
 
 		public String Name { get; } = name;
 
 		public String Usage { get; } = $"{name} {arguments}";
 
-		public async Task<Int32> RunAsync(IReadOnlyList<String> args)
+		public async Task<Int32> RunAsync(IReadOnlyList<String> args, CancellationToken cancellationToken)
 		{
 			try
 			{
@@ -30,7 +38,7 @@ namespace AcmTools.Cli.Commands
 					throw new CliUsageException(AppText.Format("ExpectedArguments", positionalCount, commandLine.Positionals.Count));
 				}
 
-				return await ExecuteAsync(commandLine).ConfigureAwait(false);
+				return await ExecuteAsync(commandLine, cancellationToken).ConfigureAwait(false);
 			}
 			catch (CliUsageException ex)
 			{
@@ -40,19 +48,59 @@ namespace AcmTools.Cli.Commands
 			}
 		}
 
-		protected abstract Task<Int32> ExecuteAsync(CommandLine commandLine);
+		protected abstract Task<Int32> ExecuteAsync(CommandLine commandLine, CancellationToken cancellationToken);
 
 		protected static AcmDecodeOptions ReadDecodeOptions(CommandLine commandLine)
 		{
 			return new AcmDecodeOptions
 			{
-				ForceFalloutMono = !commandLine.HasFlag(TrustHeaderChannelsFlag)
+				Channels = commandLine.HasFlag(TrustHeaderChannelsFlag) ? AcmChannelMode.Stereo : ReadChannels(commandLine),
+				Overwrite = !commandLine.HasFlag(NoOverwriteFlag)
 			};
 		}
 
-		protected static String FormatList()
+		/// <summary>Reads <c>--channels auto|mono|stereo</c> (automatic when absent).</summary>
+		protected static AcmChannelMode ReadChannels(CommandLine commandLine)
 		{
-			return String.Join('|', AudioFormats.Exportable.Select(format => format.ToString().ToLowerInvariant()));
+			String? text = commandLine.GetString(ChannelsOption);
+			if (text is null)
+			{
+				return AcmChannelMode.Auto;
+			}
+
+			if (!Enum.TryParse(text, true, out AcmChannelMode mode) || !Enum.IsDefined(mode))
+			{
+				throw new CliUsageException(AppText.Format("UnknownChannels", text, "auto, mono, stereo"));
+			}
+
+			return mode;
+		}
+
+		protected static Int32 ReadJobs(CommandLine commandLine)
+		{
+			return commandLine.GetInt32(JobsOption, Math.Min(Environment.ProcessorCount, 8), 1, MaxJobs);
+		}
+
+		/// <summary>Reads <c>--format</c>; <see cref="AudioFormat.Auto"/> when the option is absent.</summary>
+		protected static AudioFormat ReadFormat(CommandLine commandLine)
+		{
+			String? text = commandLine.GetString(FormatOption);
+			if (text is null)
+			{
+				return AudioFormat.Auto;
+			}
+
+			if (!AudioFormats.TryParse(text, out AudioFormat format) || !AudioFormats.Exportable.Contains(format))
+			{
+				throw new CliUsageException(AppText.Format("UnknownFormat", text, FormatList(", ")));
+			}
+
+			return format;
+		}
+
+		protected static String FormatList(String separator = "|")
+		{
+			return String.Join(separator, AudioFormats.Exportable.Select(format => format.ToString().ToLowerInvariant()));
 		}
 	}
 }

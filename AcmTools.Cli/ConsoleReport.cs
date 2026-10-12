@@ -22,7 +22,7 @@ namespace AcmTools.Cli
 		public static void WriteResult(ConversionResult result)
 		{
 			AnsiConsole.MarkupLine($"[green]{Markup.Escape(AppText.Get("Done"))}[/] {Markup.Escape(result.OutputPath)}");
-			foreach (String step in result.Steps)
+			foreach (ConversionStep step in result.Steps)
 			{
 				AnsiConsole.MarkupLine($"  - {Markup.Escape(AppText.LocalizeStep(step))}");
 			}
@@ -34,6 +34,7 @@ namespace AcmTools.Cli
 			table.AddColumn(AppText.Get("FieldColumn"));
 			table.AddColumn(AppText.Get("ValueColumn"));
 			AddRow(table, AppText.Get("Samples"), info.SampleCount);
+			table.AddRow(AppText.Get("Duration"), ((Double)info.SampleCount / info.SampleRate).ToString("F1", CultureInfo.InvariantCulture) + " s");
 			AddRow(table, AppText.Get("HeaderChannels"), info.HeaderChannels);
 			AddRow(table, AppText.Get("EffectiveChannels"), info.Channels);
 			AddRow(table, AppText.Get("SampleRate"), info.SampleRate);
